@@ -565,6 +565,27 @@ fn macos_text_typed_without_a_composition_is_committed() {
 }
 
 #[test]
+fn macos_text_after_a_commit_in_the_same_key_press_is_committed() {
+    // Apple's 2-Set Korean, without marked text, sends `insertText("산", <previous syllable>)`
+    // then `insertText("ㅇ")` for one key. The first commit makes `keyDown:` swallow the key, so
+    // the second, left to the key's `KeyboardInput`, never reached the app, and the next
+    // replacement deleted the syllable before it (부산여행 → 부여행; a space after a syllable
+    // was lost too). Measured on macOS 27.2.1, 2026-11-24.
+    let view = source("macos/view.rs");
+    let insert_text = view_method(&view, "fn insert_text(");
+    assert!(
+        insert_text.contains("PlainInsert::KeyText if !key_swallowed =>"),
+        "text after a commit in the same key press is left to the swallowed key"
+    );
+    assert!(
+        insert_text.contains(
+            "PlainInsert::KeyText | PlainInsert::Commit if self.ivars().ime_allowed.get() =>"
+        ),
+        "text after a commit in the same key press isn't committed"
+    );
+}
+
+#[test]
 fn macos_input_methods_see_a_caret_and_replace_text() {
     // winit 0.30.13 reports no selection, so dictation inserts nothing (rust-windowing/winit#4666),
     // and ignores replacement ranges, so a press-and-hold accent is typed after the letter instead

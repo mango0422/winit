@@ -519,8 +519,20 @@ declare_class!(
                 // (`，` for `,`), an ideographic space, an accent picked from the press-and-hold
                 // menu with a digit.
                 let key_characters = self.ivars().key_characters.borrow().clone();
+                // mango patch (2026-11-24, measured with Apple's 2-Set Korean on macOS 27.2.1):
+                // without marked text, that input method types each syllable as
+                // `insertText(<syllable>, <range of the previous one>)`, and on a key that starts
+                // the next syllable it sends `insertText("산", 3+1)` then `insertText("ㅇ", NF)`
+                // in the same `keyDown:`. The first is committed (`committed_in_key_down`), so
+                // `keyDown:` swallows the key, and the second, left to that key's
+                // `KeyboardInput`, never reached the app while `ime_document` recorded it. The
+                // next replacement then deleted the syllable before it: 부산여행 → 부여행, and a
+                // space after a syllable was lost. Text that follows a commit in the same key
+                // press is committed too.
+                let key_swallowed =
+                    self.ivars().in_key_down.get() && self.ivars().committed_in_key_down.get();
                 match plain_insert(&string, key_characters.as_deref()) {
-                    PlainInsert::KeyText => {
+                    PlainInsert::KeyText if !key_swallowed => {
                         let delete = self.replaced(replacement_range);
                         // The deletion goes before the key's `KeyboardInput`, which `keyDown:`
                         // sends after this returns.
@@ -530,7 +542,7 @@ declare_class!(
                         }
                         self.ivars().ime_document.borrow_mut().insert(&string)
                     },
-                    PlainInsert::Commit if self.ivars().ime_allowed.get() => {
+                    PlainInsert::KeyText | PlainInsert::Commit if self.ivars().ime_allowed.get() => {
                         let delete = self.replaced(replacement_range);
                         self.notify_ime_enabled();
                         if self.ivars().in_key_down.get() {
@@ -540,8 +552,9 @@ declare_class!(
                         self.ivars().ime_document.borrow_mut().insert(&string);
                         self.queue_commit(string, delete);
                     },
-                    // Dropped text leaves `ime_document` as it is.
-                    PlainInsert::Commit | PlainInsert::Ignore => {},
+                    // Dropped text leaves `ime_document` as it is. (`KeyText` lands here only when
+                    // the key is swallowed and IME isn't allowed: no event would carry it either.)
+                    PlainInsert::KeyText | PlainInsert::Commit | PlainInsert::Ignore => {},
                 }
             }
         }
